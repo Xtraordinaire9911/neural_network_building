@@ -6,11 +6,13 @@ import torch.nn as nn
 from torchvision import transforms, datasets
 import torch.optim as optim
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import numpy as np
 
 from model_googlenet import GoogLeNet
 
 
-def main():
+def train():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("using {} device.".format(device))
 
@@ -22,9 +24,11 @@ def main():
         "val": transforms.Compose([transforms.Resize((224, 224)),
                                    transforms.ToTensor(),
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
-
-    data_root = os.path.abspath(os.path.join(os.getcwd(), ".."))  # get data root path
-    print(data_root)
+    
+    print('current root:', os.getcwd())
+#     data_root = os.path.abspath(os.path.join(os.getcwd(), ".."))  # get data root path
+    data_root = os.getcwd()
+    print('data_root:', data_root)
     image_path = os.path.join(data_root, "dataset", "flower_data")  # flower data set path
     assert os.path.exists(image_path), "{} path does not exist.".format(image_path)
     train_dataset = datasets.ImageFolder(root=os.path.join(image_path, "train"),
@@ -51,7 +55,7 @@ def main():
                                             transform=data_transform["val"])
     val_num = len(validate_dataset)
     validate_loader = torch.utils.data.DataLoader(validate_dataset,
-                                                  batch_size=batch_size, shuffle=False,
+                                                  batch_size=batch_size, shuffle=True,
                                                   num_workers=nw)
 
     print("using {} images for training, {} images for validation.".format(train_num,
@@ -74,9 +78,11 @@ def main():
     loss_function = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.0003)
 
-    epochs = 30
+    epochs = 150
     best_acc = 0.0
-    save_path = './googleNet.pth'
+    l_loss = []
+    l_acc = []
+    save_path = './GoogLeNet.pth'
     train_steps = len(train_loader)
     for epoch in range(epochs):
         # train
@@ -96,6 +102,7 @@ def main():
 
             # print statistics
             running_loss += loss.item()
+            l_loss.append(running_loss)
 
             train_bar.desc = "train epoch[{}/{}] loss:{:.3f}".format(epoch + 1,
                                                                      epochs,
@@ -109,19 +116,44 @@ def main():
             for val_data in val_bar:
                 val_images, val_labels = val_data
                 outputs = net(val_images.to(device))  # eval model only have last output layer
-                predict_y = torch.max(outputs, dim=1)[1]
-                acc += torch.eq(predict_y, val_labels.to(device)).sum().item()
+#                 if epoch == 0:
+#                     print(type(outputs[0]), outputs[0].size())
+#                 predict_y = torch.max(outputs[0], dim=1)
+#                 if epoch == 0:
+#                     print(type(predict_y[1]), len(predict_y[1]))
+                acc += torch.eq(predict_y[1], val_labels.to(device)).sum().item()
 
         val_accurate = acc / val_num
+        l_acc.append(val_accurate)
         print('[epoch %d] train_loss: %.3f  val_accuracy: %.3f' %
               (epoch + 1, running_loss / train_steps, val_accurate))
 
         if val_accurate > best_acc:
             best_acc = val_accurate
             torch.save(net.state_dict(), save_path)
+            
+        if epoch > 10 and np.max(l_acc[-10:]) - np.min(l_acc[-10:]) < 0.02 and val_accurate > 0.75:
+            break
 
     print('Finished Training')
+    return l_loss, l_acc
 
+
+def main():
+    l_train_loss, l_accuracy = train()
+    
+    fig_loss = plt.figure()
+    plt.plot(l_train_loss)
+    plt.savefig("train_loss.jpg")
+    fig_acc = plt.figure()
+    # plt.xlim(-2, len(l_accuracy)+1)
+    plt.ylim(0, 1)
+    plt.hlines(np.mean(l_accuracy[-10:]), len(l_accuracy)+2, l_accuracy[-1], linestyle="dashed", color="black")
+    plt.text(3.5, np.mean(l_accuracy[-10:])-0.05, '{}'.format(np.round(np.mean(l_accuracy[-10:]), 2), ha='center', va= 'bottom'))
+    plt.plot(l_accuracy)
+    plt.savefig("val_accuracy.jpg")
+    
 
 if __name__ == '__main__':
     main()
+    
